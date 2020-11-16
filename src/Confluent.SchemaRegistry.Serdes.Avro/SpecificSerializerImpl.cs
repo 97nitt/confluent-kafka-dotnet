@@ -34,61 +34,15 @@ namespace Confluent.SchemaRegistry.Serdes
 {
     internal class SpecificSerializerImpl<T> : IAvroSerializerImpl<T>
     {
-        internal class SerializerSchemaData
-        {
-            private string writerSchemaString;
-            private global::Avro.Schema writerSchema;
-
-            /// <remarks>
-            ///     A given schema is uniquely identified by a schema id, even when
-            ///     registered against multiple subjects.
-            /// </remarks>
-            private int? writerSchemaId;
-
-            private SpecificWriter<T> avroWriter;
-
-            private HashSet<string> subjectsRegistered = new HashSet<string>();
-
-            public HashSet<string> SubjectsRegistered
-            {
-                get => subjectsRegistered;
-                set => subjectsRegistered = value;
-            }
-
-            public string WriterSchemaString
-            {
-                get => writerSchemaString;
-                set => writerSchemaString = value;
-            }
-
-            public Avro.Schema WriterSchema
-            {
-                get => writerSchema;
-                set => writerSchema = value;
-            }
-
-            public int? WriterSchemaId
-            {
-                get => writerSchemaId;
-                set => writerSchemaId = value;
-            }
-
-            public SpecificWriter<T> AvroWriter
-            {
-                get => avroWriter;
-                set => avroWriter = value;
-            }
-        }
-
         private ISchemaRegistryClient schemaRegistryClient;
         private bool autoRegisterSchema;
         private int initialBufferSize;
         private SubjectNameStrategyDelegate subjectNameStrategy;
 
-        private Dictionary<Type, SerializerSchemaData> multiSchemaData =
-            new Dictionary<Type, SerializerSchemaData>();
+        private Dictionary<Type, SerializerSchemaData<T>> multiSchemaData =
+            new Dictionary<Type, SerializerSchemaData<T>>();
 
-        private SerializerSchemaData singleSchemaData = null;
+        private SerializerSchemaData<T> singleSchemaData = null;
 
 
 
@@ -112,50 +66,50 @@ namespace Confluent.SchemaRegistry.Serdes
             }
         }
 
-        private static SerializerSchemaData ExtractSchemaData(Type writerType)
+        private static SerializerSchemaData<T> ExtractSchemaData(Type writerType)
         {
-            SerializerSchemaData serializerSchemaData = new SerializerSchemaData();
+            global::Avro.Schema writerSchema = null;
             if (typeof(ISpecificRecord).IsAssignableFrom(writerType))
             {
-                serializerSchemaData.WriterSchema = (global::Avro.Schema) writerType.GetField("_SCHEMA", BindingFlags.Public | BindingFlags.Static).GetValue(null);
+                writerSchema = (global::Avro.Schema) writerType.GetField("_SCHEMA", BindingFlags.Public | BindingFlags.Static).GetValue(null);
             }
             else if (writerType.Equals(typeof(int)))
             {
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("int");
+                writerSchema = global::Avro.Schema.Parse("int");
             }
             else if (writerType.Equals(typeof(bool)))
             {
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("boolean");
+                writerSchema = global::Avro.Schema.Parse("boolean");
             }
             else if (writerType.Equals(typeof(double)))
             {
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("double");
+                writerSchema = global::Avro.Schema.Parse("double");
             }
             else if (writerType.Equals(typeof(string)))
             {
                 // Note: It would arguably be better to make this a union with null, to
                 // exactly match the .NET string type, however we don't for consistency
                 // with the Java Avro serializer.
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("string");
+                writerSchema = global::Avro.Schema.Parse("string");
             }
             else if (writerType.Equals(typeof(float)))
             {
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("float");
+                writerSchema = global::Avro.Schema.Parse("float");
             }
             else if (writerType.Equals(typeof(long)))
             {
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("long");
+                writerSchema = global::Avro.Schema.Parse("long");
             }
             else if (writerType.Equals(typeof(byte[])))
             {
                 // Note: It would arguably be better to make this a union with null, to
                 // exactly match the .NET byte[] type, however we don't for consistency
                 // with the Java Avro serializer.
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("bytes");
+                writerSchema = global::Avro.Schema.Parse("bytes");
             }
             else if (writerType.Equals(typeof(Null)))
             {
-                serializerSchemaData.WriterSchema = global::Avro.Schema.Parse("null");
+                writerSchema = global::Avro.Schema.Parse("null");
             }
             else
             {
@@ -165,16 +119,15 @@ namespace Confluent.SchemaRegistry.Serdes
                 );
             }
 
-            serializerSchemaData.AvroWriter = new SpecificWriter<T>(serializerSchemaData.WriterSchema);
-            serializerSchemaData.WriterSchemaString = serializerSchemaData.WriterSchema.ToString();
-            return serializerSchemaData;
+            SpecificWriter<T> avroWriter = new SpecificWriter<T>(writerSchema);
+            return new SerializerSchemaData<T>(avroWriter);
         }
 
         public async Task<byte[]> Serialize(string topic, T data, bool isKey)
         {
             try
             {
-                SerializerSchemaData currentSchemaData;
+                SerializerSchemaData<T> currentSchemaData;
                 await serializeMutex.WaitAsync().ConfigureAwait(continueOnCapturedContext: false);
                 try
                 {
